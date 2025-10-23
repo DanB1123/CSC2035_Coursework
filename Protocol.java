@@ -2,11 +2,11 @@
  * Replace the following string of 0s with your student number
  * 000000000
  */
+import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.SocketException;
-import java.net.UnknownHostException;
+import java.io.IOException;
+import java.io.ObjectOutputStream;
+import java.net.*;
 
 public class Protocol {
 
@@ -60,8 +60,30 @@ public class Protocol {
 	 * This method sends protocol metadata to the server.
 	 * See coursework specification for full details.	
 	 */
-	public void sendMetadata()   { 
-		System.exit(0);
+	public void sendMetadata()   {
+		String payload = Protocol.instance.getFileTotalReadings() + "," +
+				Protocol.instance.getOutputFileName() + "," +
+				Protocol.instance.getMaxPatchSize();
+		Segment metaSeg = new Segment();
+		metaSeg.setType(SegmentType.Meta);
+		metaSeg.setSeqNum(0);
+		metaSeg.setPayLoad(payload);
+		ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+        ObjectOutputStream objectStream = null;
+        try {
+            objectStream = new ObjectOutputStream(byteStream);
+			objectStream.writeObject(metaSeg);
+			objectStream.flush();
+			byte[] payloadByte = byteStream.toByteArray();
+			DatagramPacket packet = new DatagramPacket(payloadByte, payloadByte.length, ipAddress, portNumber);
+			socket.send(packet);
+			System.out.println("CLIENT: META [SEQ#0] sent (TotalReadings: "
+					+ Protocol.instance.getFileTotalReadings()
+					+ ", Output: " + Protocol.instance.getOutputFileName()
+					+ ", PatchSize: " + Protocol.instance.getMaxPatchSize() + ")");
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
 	} 
 
 
