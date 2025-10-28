@@ -1,6 +1,6 @@
 /*
  * Replace the following string of 0s with your student number
- * 000000000
+ * c403141619
  */
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -56,35 +56,42 @@ public class Protocol {
 	 * Do not change any method signatures, and do not change any other methods or code provided.
 	 ***************************************************************************************************************************************
 	 **************************************************************************************************************************************/
-	/* 
+	/*
 	 * This method sends protocol metadata to the server.
-	 * See coursework specification for full details.	
+	 * Metadata includes total readings, output file name, and patch size.
+	 * It's always sent first before any data segments.
 	 */
-	public void sendMetadata()   {
+	public void sendMetadata() {
 		String payload = Protocol.instance.getFileTotalReadings() + "," +
 				Protocol.instance.getOutputFileName() + "," +
 				Protocol.instance.getMaxPatchSize();
+
 		Segment metaSeg = new Segment();
-		metaSeg.setType(SegmentType.Meta);
-		metaSeg.setSeqNum(0);
-		metaSeg.setPayLoad(payload);
-		ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-        ObjectOutputStream objectStream = null;
-        try {
-            objectStream = new ObjectOutputStream(byteStream);
+		metaSeg.setType(SegmentType.Meta);   // Metadata segment
+		metaSeg.setSeqNum(0);                // Sequence number 0 for metadata
+		metaSeg.setPayLoad(payload);         // Add payload string
+
+		try {
+			// Convert segment to bytes to send via UDP
+			ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+			ObjectOutputStream objectStream = new ObjectOutputStream(byteStream);
 			objectStream.writeObject(metaSeg);
 			objectStream.flush();
 			byte[] payloadByte = byteStream.toByteArray();
+
+			// Create UDP packet and send to server
 			DatagramPacket packet = new DatagramPacket(payloadByte, payloadByte.length, ipAddress, portNumber);
 			socket.send(packet);
+
 			System.out.println("CLIENT: META [SEQ#0] sent (TotalReadings: "
 					+ Protocol.instance.getFileTotalReadings()
 					+ ", Output: " + Protocol.instance.getOutputFileName()
 					+ ", PatchSize: " + Protocol.instance.getMaxPatchSize() + ")");
+
 		} catch (IOException e) {
 			throw new RuntimeException(e);
 		}
-	} 
+	}
 
 
 	/* 
