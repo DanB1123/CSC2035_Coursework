@@ -2,11 +2,22 @@
  * Replace the following string of 0s with your student number
  * c403141619
  */
-import java.io.ByteArrayOutputStream;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Scanner;
 import java.io.File;
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
 import java.io.ObjectOutputStream;
-import java.net.*;
+import java.io.ByteArrayInputStream;
+import java.io.ObjectInputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.net.SocketException;
+
+
 
 public class Protocol {
 
@@ -98,18 +109,106 @@ public class Protocol {
 	 * This method read and send the next data segment (dataSeg) to the server. 
 	 * See coursework specification for full details.
 	 */
-	public void readAndSend() { 
-		System.exit(0);
+	// Read a patch of readings from CSV and send as a Data segment
+	public void readAndSend() {
+		try {
+			// Open the CSV file
+			Scanner csvScanner = new Scanner(instance.inputFile);
+
+			// Skip readings that were already sent and acknowledged
+			int skipped = 0;
+			while (skipped < instance.sentReadings && csvScanner.hasNextLine()) {
+				csvScanner.nextLine();
+				skipped++;
+			}
+
+			// Read next batch of readings (up to maxPatchSize)
+			StringBuilder payloadBuilder = new StringBuilder();
+			int readingsInSegment = 0;
+			while (csvScanner.hasNextLine() && readingsInSegment < instance.maxPatchSize) {
+				String line = csvScanner.nextLine().trim();
+				if (!line.isEmpty()) {
+					if (payloadBuilder.length() > 0) {
+						payloadBuilder.append(";"); // separate readings with semicolon
+					}
+					payloadBuilder.append(line);
+					readingsInSegment++;
+				}
+			}
+
+			// If there are no readings left, exit the program
+			if (readingsInSegment == 0) {
+				csvScanner.close();
+				System.exit(0);
+			}
+
+			// Create a Data segment to send
+			// seqNum alternates between 1 and 0 for Stop-and-Wait
+			instance.dataSeg = new Segment(
+					(instance.totalSegments % 2) + 1,
+					SegmentType.Data,
+					payloadBuilder.toString(),
+					payloadBuilder.toString().length()
+			);
+
+			// Send the Data segment over UDP
+			ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+			ObjectOutputStream objStream = new ObjectOutputStream(byteStream);
+			objStream.writeObject(instance.dataSeg);
+			objStream.flush();
+			byte[] packetData = byteStream.toByteArray();
+			DatagramPacket packet = new DatagramPacket(packetData, packetData.length, instance.ipAddress, instance.portNumber);
+			instance.socket.send(packet);
+
+			// Update counters to track progress
+			instance.totalSegments++;  // total segments sent
+			instance.sentReadings += readingsInSegment;  // total readings sent
+
+			// Print a simple message for user to follow progress
+			System.out.println("CLIENT: Sent DATA [SEQ#" + instance.dataSeg.getSeqNum() + "] with "
+					+ readingsInSegment + " readings, total segments sent: " + instance.totalSegments);
+
+			csvScanner.close();
+
+		} catch (Exception e) {
+			System.out.println("CLIENT: Error sending data segment");
+			e.printStackTrace();
+			System.exit(0);
+		}
 	}
 
-	/* 
-	 * This method receives the current Ack segment (ackSeg) from the server 
-	 * See coursework specification for full details.
-	 */
-	public boolean receiveAck() { 
-		System.exit(0);
-		return false;
+	// Receive an ACK from the server
+	public boolean receiveAck() {
+		try {
+			// Prepare buffer to receive ACK
+			byte[] buf = new byte[MAX_Segment_SIZE];
+			DatagramPacket incomingPacket = new DatagramPacket(buf, buf.length);
+			instance.socket.receive(incomingPacket);
+
+			// Deserialize received object into Segment
+			ByteArrayInputStream byteIn = new ByteArrayInputStream(incomingPacket.getData());
+			ObjectInputStream objIn = new ObjectInputStream(byteIn);
+			Segment ackSeg = (Segment) objIn.readObject();
+
+			// Check if received segment is an ACK and matches our last sent seqNum
+			if (ackSeg.getType() == SegmentType.Ack && ackSeg.getSeqNum() == instance.dataSeg.getSeqNum()) {
+				System.out.println("CLIENT: Received ACK [SEQ#" + ackSeg.getSeqNum() + "]");
+				return true;  // ACK is correct
+			} else {
+				System.out.println("CLIENT: Received wrong ACK or duplicate, expected SEQ#" + instance.dataSeg.getSeqNum());
+				return false; // ACK does not match, ignore
+			}
+
+		} catch (Exception e) {
+			System.out.println("CLIENT: Error receiving ACK");
+			e.printStackTrace();
+			System.exit(0);
+			return false;
+		}
 	}
+
+
+
 
 	/* 
 	 * This method starts a timer and does re-transmission of the Data segment 
