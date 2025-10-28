@@ -2,6 +2,7 @@
  * Replace the following string of 0s with your student number
  * c403141619
  */
+import java.net.*;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Scanner;
@@ -11,12 +12,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.ObjectOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ObjectInputStream;
-import java.net.DatagramPacket;
-import java.net.DatagramSocket;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.net.SocketException;
-
 
 
 public class Protocol {
@@ -214,10 +209,63 @@ public class Protocol {
 	 * This method starts a timer and does re-transmission of the Data segment 
 	 * See coursework specification for full details.
 	 */
-	public void startTimeoutWithRetransmission()   {  
-		System.exit(0);
-	}
+	public void startTimeoutWithRetransmission() {
+		try {
+			// set the socket timeout so that receive() will throw an exception if no ACK comes in time
+			socket.setSoTimeout(timeout);
 
+			boolean ackReceived = false;
+
+			while (!ackReceived) {
+				try {
+					// wait for ACK from server
+					if (receiveAck()) {
+						// ACK received correctly
+						ackReceived = true;
+
+						// reset retry counter for next segment
+						currRetry = 0;
+					} else {
+						// receiveAck() returned false; treat as failure
+						throw new IOException("ACK not valid or not received");
+					}
+				} catch (SocketTimeoutException e) {
+					// timeout happened, meaning ACK not received in time
+					currRetry++;  // count this retry
+
+					// check if we have reached max retries
+					if (currRetry > maxRetries) {
+						System.out.println("CLIENT: Maximum retries reached for segment " + dataSeg.getSeqNum() + ". Exiting.");
+						System.exit(1);
+					}
+
+					// resend the same Data segment
+					System.out.println("CLIENT: Timeout! Resending segment [SEQ#" + dataSeg.getSeqNum() + "]");
+
+					// send the segment again
+					try {
+						ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
+						ObjectOutputStream objStream = new ObjectOutputStream(byteStream);
+						objStream.writeObject(dataSeg);
+						objStream.flush();
+						byte[] data = byteStream.toByteArray();
+
+						DatagramPacket packet = new DatagramPacket(data, data.length, ipAddress, portNumber);
+						socket.send(packet);
+
+						totalSegments++;  // update total segments sent
+						System.out.println("CLIENT: Segment [SEQ#" + dataSeg.getSeqNum() + "] re-sent. Total segments sent: " + totalSegments);
+					} catch (IOException ioEx) {
+						System.out.println("CLIENT: Error resending segment [SEQ#" + dataSeg.getSeqNum() + "]: " + ioEx.getMessage());
+					}
+				}
+			}
+
+		} catch (IOException e) {
+			System.out.println("CLIENT: Socket error during timeout handling: " + e.getMessage());
+			System.exit(1);
+		}
+	}
 
 	/* 
 	 * This method is used by the server to receive the Data segment in Lost Ack mode
