@@ -12,7 +12,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.ObjectOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ObjectInputStream;
-
+import java.io.*;
+import java.net.*;
+import java.util.*;
 
 public class Protocol {
 
@@ -271,8 +273,97 @@ public class Protocol {
 	 * This method is used by the server to receive the Data segment in Lost Ack mode
 	 * See coursework specification for full details.
 	 */
-	public void receiveWithAckLoss(DatagramSocket serverSocket, float loss)  {
-		System.exit(0);
+	public void receiveWithAckLoss(DatagramSocket serverSocket, float loss) {
+		List<String> receivedLines = new ArrayList<>(); // store readings temporarily
+		int expectedSeqNum = 1; // first data segment is sequence 1
+		int readingCount = 0;   // track number of readings written
+		long totalBytesReceived = 0;  // total bytes including retransmissions
+		long totalBytesUseful = 0;    // total original payload bytes
+
+		byte[] buf = new byte[MAX_Segment_SIZE];
+
+		try {
+			serverSocket.setSoTimeout(2000); // timeout for final exit
+
+			while (true) {
+				DatagramPacket packet = new DatagramPacket(buf, buf.length);
+
+				try {
+					serverSocket.receive(packet); // wait for client data
+				} catch (SocketTimeoutException e) {
+					System.out.println("SERVER: Timeout reached, no more data. Exiting...");
+					break;
+				}
+
+				totalBytesReceived += packet.getLength(); // count all received bytes
+
+				// deserialize segment
+				ByteArrayInputStream bais = new ByteArrayInputStream(packet.getData(), 0, packet.getLength());
+				ObjectInputStream ois = new ObjectInputStream(bais);
+				Segment dataSeg = (Segment) ois.readObject();
+
+				System.out.println("SERVER: Receive: DATA [SEQ#" + dataSeg.getSeqNum() + "]("
+						+ "size:" + dataSeg.getSize() + ", crc: " + dataSeg.getChecksum()
+						+ ", content:" + dataSeg.getPayLoad() + ")");
+
+				long checksum = dataSeg.calculateChecksum();
+
+				// Check if segment is valid
+				if (dataSeg.getType() == SegmentType.Data && checksum == dataSeg.getChecksum()) {
+					System.out.println("SERVER: Calculated checksum is " + checksum + " VALID");
+
+					InetAddress clientAddr = packet.getAddress();
+					int clientPort = packet.getPort();
+
+					if (dataSeg.getSeqNum() == expectedSeqNum) {
+						// correct sequence → write readings
+						String[] lines = dataSeg.getPayLoad().split(";");
+						receivedLines.add("Segment [" + dataSeg.getSeqNum() + "] has " + lines.length + " Readings");
+						receivedLines.addAll(Arrays.asList(lines));
+						receivedLines.add("");
+						readingCount += lines.length;
+						totalBytesUseful += dataSeg.getPayLoad().getBytes().length;
+
+						// send ACK, may be lost
+						if (!isLost(loss)) {
+							Server.sendAck(serverSocket, clientAddr, clientPort, dataSeg.getSeqNum());
+						} else {
+							System.out.println("SERVER: Simulating lost ACK for SEQ#" + dataSeg.getSeqNum());
+						}
+
+						expectedSeqNum++; // move to next expected segment
+
+					} else {
+						// duplicate segment received → resend last ACK
+						System.out.println("SERVER: Duplicate DATA detected for SEQ#" + dataSeg.getSeqNum());
+						int lastAckSeq = expectedSeqNum - 1;
+						if (lastAckSeq > 0) {
+							if (!isLost(loss)) {
+								Server.sendAck(serverSocket, clientAddr, clientPort, lastAckSeq);
+							} else {
+								System.out.println("SERVER: Simulating lost ACK for duplicate SEQ#" + lastAckSeq);
+							}
+						}
+					}
+				} else {
+					System.out.println("SERVER: Calculated checksum INVALID or wrong type. No ACK sent.");
+				}
+
+				// check if all readings received
+				if (readingCount >= Protocol.instance.getFileTotalReadings()) {
+					Server.writeReadingsToFile(receivedLines, Protocol.instance.getOutputFileName());
+					break;
+				}
+			}
+
+			// calculate efficiency
+			double efficiency = (double) totalBytesUseful / totalBytesReceived * 100.0;
+			System.out.printf("SERVER: Transfer efficiency: %.2f%%\n", efficiency);
+
+			serverSocket.close();
+		} catch (IOException | ClassNotFoundException e) {
+			e.printStackTrace();
+		}
 	}
 
 
